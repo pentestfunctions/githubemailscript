@@ -16,7 +16,7 @@ headers = {
 
 def get_commit_urls(username, repo_name):
     commits_url = f"https://api.github.com/repos/{username}/{repo_name}/commits"
-    commits_response = requests.get(commits_url, headers=headers)  # Include headers here
+    commits_response = requests.get(commits_url, headers=headers)
 
     if commits_response.status_code == 200:
         commits = commits_response.json()
@@ -45,7 +45,7 @@ def check_email_in_patch(patch_url):
         return []
 
 # Perform the GET request for the repositories
-repos_response = requests.get(repos_url, headers=headers)  # Include headers here
+repos_response = requests.get(repos_url, headers=headers)
 
 # Check if the request was successful
 if repos_response.status_code == 200:
