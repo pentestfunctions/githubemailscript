@@ -1,67 +1,80 @@
 import requests
 import re
+from urllib.parse import urlparse
+from termcolor import colored
 
-# Create token below (Give it any name/expiration time and just give ie access to read Public Repositories)
-# Uses tokens otherwise API rate limits: https://github.com/settings/tokens/new
-personal_access_token = 'TEST_CODE'
+# Retrieve the personal access token from an environment variable
+personal_access_token = "TOKENHERE"
 
 # Replace 'username' with the actual GitHub username you're interested in
-username = "pentestfunctions"
-repos_url = f"https://api.github.com/users/{username}/repos"
+username = ""
 
-# Headers to be used for authorization
+if not username:
+    username = input("What is the username of the GitHub to check?: ")
+
+# Exit if the token is not set
+if not personal_access_token:
+    print("GitHub personal access token not found. Please set the GITHUB_TOKEN environment variable.")
+    exit()
+
+# Headers to be used for authorization and accepting JSON responses
 headers = {
-    'Authorization': f'token {personal_access_token}'
+    'Authorization': f'token {personal_access_token}',
+    'Accept': 'application/vnd.github.v3+json'
 }
 
-def get_commit_urls(username, repo_name):
+def get_all_pages(url):
+    while url:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            yield from response.json()
+            if 'next' in response.links:
+                url = response.links['next']['url']
+            else:
+                break
+        else:
+            print(f"Failed to retrieve data from {url}. Status code: {response.status_code}")
+            break
+
+def get_commit_emails(username, repo_name):
     commits_url = f"https://api.github.com/repos/{username}/{repo_name}/commits"
-    commits_response = requests.get(commits_url, headers=headers)
+    commit_emails = []
 
-    if commits_response.status_code == 200:
-        commits = commits_response.json()
-        commit_urls = [f"https://github.com/{username}/{repo_name}/commit/{commit['sha']}.patch" for commit in commits]
-        return commit_urls
-    else:
-        print(f"Failed to retrieve commits for repository {repo_name}. Status code: {commits_response.status_code}")
-        return []
+    for commit in get_all_pages(commits_url):
+        commit_url = f"https://github.com/{username}/{repo_name}/commit/{commit['sha']}.patch"
+        patch_response = requests.get(commit_url, headers=headers)
 
-def check_email_in_patch(patch_url):
-    patch_response = requests.get(patch_url, headers=headers)  # Include headers here
+        if patch_response.status_code == 200:
+            email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+            emails = re.findall(email_pattern, patch_response.text)
+            commit_emails.extend([(email, commit_url) for email in emails])
+        else:
+            print(f"Failed to retrieve patch for URL {commit_url}. Status code: {patch_response.status_code}")
 
-    if patch_response.status_code == 200:
-        # Regex pattern for matching email addresses
-        email_pattern = (r'(?:[a-z0-9!#$%&\'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&\'*+/=?^_`{|}~-]+)*|'
-                         r'"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\'
-                         r'[\x01-\x09\x0b\x0c\x0e-\x7f])*")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.'
-                         r')+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:25[0-5]|2[0-4][0-9]|[01]?'
-                         r'[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?|'
-                         r'[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|'
-                         r'\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\])')
-        emails = re.findall(email_pattern, patch_response.text)
-        return emails
-    else:
-        print(f"Failed to retrieve patch for URL {patch_url}. Status code: {patch_response.status_code}")
-        return []
+    return commit_emails
 
-# Perform the GET request for the repositories
-repos_response = requests.get(repos_url, headers=headers)
+def print_emails_nicely(emails_with_urls):
+    emails_set = set()  # Use a set to automatically deduplicate emails
+    for email, url in emails_with_urls:
+        emails_set.add(email)  # Add to set for deduplication
+        email_colored = colored(email, 'blue')
+        url_colored = colored(url, 'green')
+        print(f"Email: {email_colored} found at URL: {url_colored}")
 
-# Check if the request was successful
-if repos_response.status_code == 200:
-    # Parse the response JSON and iterate through the repositories
-    repositories = repos_response.json()
-    for repo in repositories:
-        # Check if the repo is a fork
+    # Print separator and deduplicated emails
+    print("\n" + "-" * 40 + "\nAll unique emails found:\n" + "-" * 40)
+    for email in emails_set:
+        print(colored(email, 'yellow'))
+
+if __name__ == "__main__":
+    repos_url = f"https://api.github.com/users/{username}/repos"
+    all_emails_with_urls = []
+
+    for repo in get_all_pages(repos_url):
         if not repo['fork']:
-            print(f"Repository: {repo['name']}")
-            # Get the commit patch URLs for the repository
-            commit_patch_urls = get_commit_urls(username, repo['name'])
-            for patch_url in commit_patch_urls:
-                emails = check_email_in_patch(patch_url)
-                if emails:
-                    print(f"Commit patch URL: {patch_url} contains emails: {emails}")
-                else:
-                    print(f"Commit patch URL: {patch_url} contains no emails.")
-else:
-    print(f"Failed to retrieve repositories for user {username}. Status code: {repos_response.status_code}")
+            print(f"Processing Repository: {repo['name']}")
+            commit_emails = get_commit_emails(username, repo['name'])
+            all_emails_with_urls.extend(commit_emails)
+
+    # Once processing is done, print the emails and URLs nicely
+    print_emails_nicely(all_emails_with_urls)
